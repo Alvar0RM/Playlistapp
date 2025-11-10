@@ -21,8 +21,14 @@ class ArtistsViewModel : ViewModel() {
   private val _uiState = MutableStateFlow<ArtistsUiState>(ArtistsUiState.Loading)
   val uiState: StateFlow<ArtistsUiState> = _uiState.asStateFlow()
 
+  private var currentOffset = 0
+  private val limit = 20
+  private var isLoadingMore = false
+  private var canLoadMore = true
   private var currentQuery = "rock"
   private var searchJob: Job? = null
+
+  private val allArtists = mutableListOf<romero.alvaro.playlist.domain.model.Artist>()
 
   init {
     searchArtists("rock")
@@ -32,22 +38,38 @@ class ArtistsViewModel : ViewModel() {
     currentQuery = query
     searchJob?.cancel()
 
+    if (currentOffset == 0) {
+      _uiState.value = ArtistsUiState.Loading
+      allArtists.clear()
+      canLoadMore = true
+    }
+
     searchJob = viewModelScope.launch {
       // Pequeño delay para evitar búsquedas muy frecuentes
       if (query != "rock") {
-        delay(500) // Debounce de 500ms
+        delay(500)
       }
 
-      _uiState.value = ArtistsUiState.Loading
-      println("ArtistsViewModel: Buscando artistas: '$query'")
+      if (currentOffset == 0) {
+        _uiState.value = ArtistsUiState.Loading
+      }
+
+      println("ArtistsViewModel: Buscando artistas: '$query', offset: $currentOffset")
 
       try {
-        val artists = searchArtistsUseCase(query, 20, 0)
+        val artists = searchArtistsUseCase(query, limit, currentOffset)
         println("ArtistsViewModel: Artistas obtenidos: ${artists.size}")
 
-        if (artists.isNotEmpty()) {
-          _uiState.value = ArtistsUiState.Success(artists)
-          println("ArtistsViewModel: Estado -> Success con ${artists.size} artistas")
+        allArtists.addAll(artists)
+
+        val hasMoreData = artists.size == limit
+
+        if (allArtists.isNotEmpty()) {
+          _uiState.value = ArtistsUiState.Success(
+            artists = allArtists.toList(),
+            canLoadMore = hasMoreData
+          )
+          println("ArtistsViewModel: Estado -> Success con ${allArtists.size} artistas totales, canLoadMore: $hasMoreData")
         } else {
           _uiState.value = ArtistsUiState.Error("No se encontraron artistas para '$query'")
           println("ArtistsViewModel: Estado -> Error - lista vacía")
@@ -66,11 +88,34 @@ class ArtistsViewModel : ViewModel() {
         }
         _uiState.value = ArtistsUiState.Error(errorMessage)
         println("ArtistsViewModel: Estado -> Error - $errorMessage")
+      } finally {
+        isLoadingMore = false
       }
     }
   }
 
+  fun loadMoreArtists() {
+    if (isLoadingMore || !canLoadMore) {
+      println("ArtistsViewModel: loadMoreArtists ignorado - isLoadingMore: $isLoadingMore, canLoadMore: $canLoadMore")
+      return
+    }
+
+    isLoadingMore = true
+    currentOffset += limit
+    println("ArtistsViewModel: Cargando más artistas, nuevo offset: $currentOffset")
+    searchArtists(currentQuery)
+  }
+
+  fun resetPagination() {
+    currentOffset = 0
+    isLoadingMore = false
+    canLoadMore = true
+    allArtists.clear()
+    println("ArtistsViewModel: Paginación reseteada")
+  }
+
   fun retryLoading() {
+    resetPagination()
     searchArtists(currentQuery)
   }
 }

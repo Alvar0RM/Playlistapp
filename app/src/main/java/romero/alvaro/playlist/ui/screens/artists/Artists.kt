@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -29,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,16 +53,42 @@ fun Artists(
   var showSearchBar by remember { mutableStateOf(false) }
   var searchQuery by remember { mutableStateOf("rock") }
 
+  val lazyGridState = rememberLazyGridState()
+
+  LaunchedEffect(lazyGridState) {
+    snapshotFlow { lazyGridState.layoutInfo.visibleItemsInfo }
+      .collect { visibleItems ->
+        when (val currentState = uiState) {
+          is ArtistsUiState.Success -> {
+            if (visibleItems.isNotEmpty()) {
+              val lastVisibleItem = visibleItems.last()
+              val totalItems = currentState.artists.size
+
+              if (lastVisibleItem.index >= totalItems - 3 && currentState.canLoadMore) {
+                println("Artists: Llegando al final, cargando más artistas...")
+                viewModel.loadMoreArtists()
+              }
+            }
+          }
+          else -> { /* No hacer nada para otros estados */ }
+        }
+      }
+  }
+
   LaunchedEffect(searchQuery) {
     if (showSearchBar && searchQuery.isNotBlank()) {
+      viewModel.resetPagination()
       viewModel.searchArtists(searchQuery)
     }
   }
 
   LaunchedEffect(uiState) {
-    if (uiState is ArtistsUiState.Error) {
-      val error = (uiState as ArtistsUiState.Error).message
-      snackbarHostState.showSnackbar(error)
+    when (val currentState = uiState) {
+      is ArtistsUiState.Error -> {
+        val error = currentState.message
+        snackbarHostState.showSnackbar(error)
+      }
+      else -> { /* No hacer nada para otros estados */ }
     }
   }
 
@@ -75,6 +103,7 @@ fun Artists(
                 showSearchBar = !showSearchBar
                 if (!showSearchBar) {
                   searchQuery = "rock"
+                  viewModel.resetPagination()
                   viewModel.searchArtists("rock")
                 }
               }
@@ -105,27 +134,34 @@ fun Artists(
         .fillMaxSize()
         .padding(paddingValues)
     ) {
-      when (uiState) {
+      when (val currentState = uiState) {
         is ArtistsUiState.Loading -> {
           CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
         }
 
         is ArtistsUiState.Success -> {
-          val artists = (uiState as ArtistsUiState.Success).artists
+          val artists = currentState.artists
+          val canLoadMore = currentState.canLoadMore
+
           if (artists.isEmpty()) {
             EmptyArtistsMessage(searchQuery)
           } else {
             ArtistsGrid(
               artists = artists,
-              onArtistClick = onArtistClick
+              onArtistClick = onArtistClick,
+              lazyGridState = lazyGridState,
+              canLoadMore = canLoadMore
             )
           }
         }
 
         is ArtistsUiState.Error -> {
           ErrorState(
-            message = (uiState as ArtistsUiState.Error).message,
-            onRetry = { viewModel.searchArtists(searchQuery) }
+            message = currentState.message,
+            onRetry = {
+              viewModel.resetPagination()
+              viewModel.searchArtists(searchQuery)
+            }
           )
         }
       }
@@ -137,6 +173,8 @@ fun Artists(
 fun ArtistsGrid(
   artists: List<romero.alvaro.playlist.domain.model.Artist>,
   onArtistClick: (String) -> Unit,
+  lazyGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+  canLoadMore: Boolean,
   modifier: Modifier = Modifier
 ) {
   LazyVerticalGrid(
@@ -144,13 +182,27 @@ fun ArtistsGrid(
     modifier = modifier.fillMaxSize(),
     contentPadding = PaddingValues(8.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp)
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+    state = lazyGridState
   ) {
     items(artists) { artist ->
       ArtistItem(
         artist = artist,
         onClick = { onArtistClick(artist.id) }
       )
+    }
+
+    if (canLoadMore) {
+      item {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          CircularProgressIndicator()
+        }
+      }
     }
   }
 }
